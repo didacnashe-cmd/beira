@@ -19,7 +19,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import VERSION
 from .config import Config
 from .limits import FailureGuard, RateLimiter, cap_result
-from .policy import Denied, apply_policy, apply_path_policy
+from .policy import Denied, apply_policy
 from .store import Contact, Store
 from .upstream import Upstream
 

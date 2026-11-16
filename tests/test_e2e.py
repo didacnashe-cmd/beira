@@ -406,10 +406,13 @@ def test_local_mcp_down_fails_fast_on_second_call(tmp_path):
         token = env.store.invite("pau", ["query_personal_db"])
         assert call(env, token, "query_personal_db", {"sql_query": "select 1"})[0] is True
         assert app.state.beira.upstream.down.active()
-        start = time.monotonic()
         is_error, _ = call(env, token, "query_personal_db", {"sql_query": "select 1"})
-        assert is_error and time.monotonic() - start < 0.45  # sin esperar al connect_timeout
-        assert env.store.audit_log(1)[0]["outcome"] == "upstream_error"
+        assert is_error
+        # Se mide en el servidor (auditoría), no en el cliente: abrir la sesión
+        # MCP ya cuesta ~0,5 s en máquinas lentas y el test fallaba sin motivo.
+        row = env.store.audit_log(1)[0]
+        assert row["outcome"] == "upstream_error"
+        assert row["duration_ms"] < 250  # sin esperar al connect_timeout (500 ms)
         assert tools_of(env, token) == {"ping"}
 
 

@@ -173,12 +173,16 @@ hay un tipo de regla, `tables`, pensado para `query_personal_db`:
 | `BEIRA_TRUST_PROXY_HEADER` | vacío | Cabecera con la IP real del cliente; detrás del túnel de Cloudflare, `CF-Connecting-IP`. Vacío = IP del socket |
 | `BEIRA_UPSTREAM_BACKOFF` | `10` | Segundos que, tras un fallo de conexión, se da por caído el MCP local y se falla al instante (`0` = desactivado) |
 | `BEIRA_RULES` | `rules.json` junto a `BEIRA_DB` (`/data/rules.json` en Docker) | Reglas por argumento; si no existe, no hay reglas |
+
 ## Límites conocidos
 
 - El aislamiento de rutas es textual: un enlace simbólico dentro de la carpeta
   compartida que apunte fuera no se detecta.
-- Una tool sin entrada en `BEIRA_PATH_ARGS` recibe sus argumentos tal cual
-  (p. ej. `query_personal_db` da acceso a toda la base): concédela a conciencia.
+- Una tool sin entrada en `BEIRA_PATH_ARGS` ni regla en `BEIRA_RULES` recibe
+  sus argumentos tal cual (p. ej. `query_personal_db` sin regla da acceso a
+  toda la base): concédela a conciencia.
+- La regla `tables` limita tablas, no columnas ni filas. Si una tabla permitida
+  es una vista sobre otras, la vista lee lo que lea.
 - El rate limit, el freno a tokens inválidos y la caché de «MCP local caído»
   viven en memoria: se reinician con el contenedor.
 - Detrás del túnel, sin `BEIRA_TRUST_PROXY_HEADER` todas las peticiones llegan
@@ -214,6 +218,7 @@ si quieres, un `.env` junto al `docker-compose.yml` con `BEIRA_PUBLIC_URL`.
 - [Gobernanza](GOVERNANCE.md): quién decide y cómo cambia la spec.
 
 Licencia: [Apache-2.0](LICENSE) © 2026 THC Labs.
+
 ## Publicar una versión
 
 La imagen pública vive en `ghcr.io/didacnashe-cmd/beira` (`linux/amd64` y
