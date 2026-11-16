@@ -33,6 +33,83 @@ class RateLimiter:
         return True
 
 
+class FailureGuard:
+    """Bloquea una clave (una IP) que acumula `limit` fallos en `window` s.
+
+    El bloqueo dura `block_for` s desde el fallo que lo dispara. Todo en memoria.
+    """
+
+    MAX_KEYS = 10_000  # por encima, se barren las claves sin fallos recientes
+
+    def __init__(
+        self,
+        limit: int,
+        window: float = 60.0,
+        block_for: float = 60.0,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        self.limit = limit
+        self.window = window
+        self.block_for = block_for
+        self.clock = clock
+        self._fails: dict[str, deque[float]] = {}
+        self._until: dict[str, float] = {}
+
+    def blocked(self, key: str) -> float:
+        """Segundos de bloqueo que le quedan a `key` (0 si no está bloqueada)."""
+        until = self._until.get(key)
+        if until is None:
+            return 0.0
+        left = until - self.clock()
+        if left <= 0:
+            del self._until[key]
+            return 0.0
+        return left
+
+    def fail(self, key: str) -> None:
+        """Anota un fallo de `key` y la bloquea si llega al límite."""
+        if self.limit <= 0:
+            return
+        now = self.clock()
+        fails = self._fails.setdefault(key, deque())
+        while fails and now - fails[0] >= self.window:
+            fails.popleft()
+        fails.append(now)
+        if len(fails) >= self.limit:
+            self._until[key] = now + self.block_for
+            fails.clear()
+        if len(self._fails) > self.MAX_KEYS:
+            self._sweep(now)
+
+    def _sweep(self, now: float) -> None:
+        for key in [k for k, f in self._fails.items() if not f or now - f[-1] >= self.window]:
+            del self._fails[key]
+        for key in [k for k, u in self._until.items() if u <= now]:
+            del self._until[key]
+
+
+class Cooldown:
+    """Recuerda un fallo durante `seconds` s (p. ej. «el MCP local está caído»)."""
+
+    def __init__(self, seconds: float, clock: Callable[[], float] = time.monotonic):
+        self.seconds = seconds
+        self.clock = clock
+        self._until = 0.0
+        self.reason = ""
+
+    def trip(self, reason: str) -> None:
+        if self.seconds > 0:
+            self._until = self.clock() + self.seconds
+            self.reason = reason
+
+    def active(self) -> bool:
+        return self.clock() < self._until
+
+    def reset(self) -> None:
+        self._until = 0.0
+        self.reason = ""
+
+
 def _size(obj) -> int:
     return len(json.dumps(obj, ensure_ascii=False, default=str).encode())
 

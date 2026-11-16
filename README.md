@@ -59,7 +59,9 @@ un token nuevo y sustituye sus permisos.
 ## Cómo decide Beira
 
 1. **¿Quién eres?** `Authorization: Bearer <token>` en cada petición. Sin token
-   válido: `401`. `/healthz` es lo único abierto.
+   válido: `401`. `/healthz` es lo único abierto. Una IP que acumula
+   `BEIRA_AUTH_FAIL_LIMIT` respuestas `401` en un minuto recibe `429` con
+   `Retry-After` durante un minuto, sin que Beira consulte SQLite.
 2. **¿Puedes ver esta tool?** Solo si está en tu lista blanca, no está en
    `BEIRA_DENY_TOOLS` y, si usa rutas, tienes carpeta asignada.
 3. **¿A qué ruta?** El argumento de ruta se reescribe para quedar dentro de tu
@@ -83,6 +85,9 @@ un token nuevo y sustituye sus permisos.
 | `BEIRA_MAX_RESPONSE_BYTES` | `200000` | Tamaño máximo de respuesta |
 | `BEIRA_PATH_ARGS` | tools de Obsidian | `tool=argumento` de las tools que reciben rutas |
 | `BEIRA_DENY_TOOLS` | `run_bash_command` | Tools que no se exponen nunca |
+| `BEIRA_AUTH_FAIL_LIMIT` | `20` | `401` por IP y minuto antes de bloquearla 60 s con `429` (`0` = sin freno) |
+| `BEIRA_TRUST_PROXY_HEADER` | vacío | Cabecera con la IP real del cliente; detrás del túnel de Cloudflare, `CF-Connecting-IP`. Vacío = IP del socket |
+| `BEIRA_UPSTREAM_BACKOFF` | `10` | Segundos que, tras un fallo de conexión, se da por caído el MCP local y se falla al instante (`0` = desactivado) |
 
 ## Límites conocidos
 
@@ -90,7 +95,12 @@ un token nuevo y sustituye sus permisos.
   compartida que apunte fuera no se detecta.
 - Una tool sin entrada en `BEIRA_PATH_ARGS` recibe sus argumentos tal cual
   (p. ej. `query_personal_db` da acceso a toda la base): concédela a conciencia.
-- El rate limit vive en memoria: se reinicia con el contenedor.
+- El rate limit, el freno a tokens inválidos y la caché de «MCP local caído»
+  viven en memoria: se reinician con el contenedor.
+- Detrás del túnel, sin `BEIRA_TRUST_PROXY_HEADER` todas las peticiones llegan
+  desde la IP de `cloudflared`, así que una ráfaga de tokens malos bloquearía a
+  todos. Configúrala solo si Beira no es accesible salvo a través del túnel
+  (escucha en `127.0.0.1`): quien llegue directo podría falsear la cabecera.
 
 ## Desarrollo
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar
 
 import anyio
 import httpx
@@ -12,6 +12,9 @@ from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 
 from .config import Config
+from .limits import Cooldown
+
+T = TypeVar("T")
 
 
 class UpstreamError(Exception):
@@ -30,11 +33,33 @@ async def _clean_errors() -> AsyncIterator[None]:
         raise UpstreamError(f"{type(cause).__name__}: {cause}") from cause
 
 
+def _is_down(exc: BaseException) -> bool:
+    """¿El fallo dice que el MCP local está caído? Un timeout de lectura no: lento no es caído."""
+    cause = exc.__cause__ if isinstance(exc, UpstreamError) else exc
+    if isinstance(cause, httpx.ConnectTimeout):
+        return True
+    if isinstance(cause, (TimeoutError, httpx.TimeoutException)):
+        return False
+    return isinstance(cause, (OSError, httpx.TransportError))
+
+
 class Upstream:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, clock: Callable[[], float] = time.monotonic):
         self.cfg = cfg
         self._tools: list[types.Tool] | None = None
         self._tools_at = 0.0
+        # Tras un fallo de conexión, durante unos segundos se falla al instante.
+        self.down = Cooldown(cfg.upstream_backoff, clock)
+
+    async def _guarded(self, op: Callable[[], Awaitable[T]]) -> T:
+        if self.down.active():
+            raise UpstreamError(self.down.reason)
+        try:
+            return await op()
+        except Exception as exc:
+            if _is_down(exc):
+                self.down.trip(str(exc) if isinstance(exc, UpstreamError) else f"{type(exc).__name__}: {exc}")
+            raise
 
     @asynccontextmanager
     async def _session(self) -> AsyncIterator[ClientSession]:
@@ -58,6 +83,11 @@ class Upstream:
         """Catálogo de tools del MCP local, con caché breve."""
         if self._tools is not None and time.monotonic() - self._tools_at < self.cfg.tools_ttl:
             return self._tools
+        tools = await self._guarded(self._fetch_tools)
+        self._tools, self._tools_at = tools, time.monotonic()
+        return tools
+
+    async def _fetch_tools(self) -> list[types.Tool]:
         tools: list[types.Tool] = []
         with anyio.fail_after(self.cfg.timeout):
             async with _clean_errors(), self._session() as session:
@@ -68,11 +98,14 @@ class Upstream:
                     cursor = page.nextCursor
                     if not cursor:
                         break
-        self._tools, self._tools_at = tools, time.monotonic()
         return tools
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> types.CallToolResult:
         """Llama a una tool. Lanza TimeoutError si supera el tiempo máximo."""
-        with anyio.fail_after(self.cfg.timeout):
-            async with _clean_errors(), self._session() as session:
-                return await session.call_tool(name, arguments)
+
+        async def op() -> types.CallToolResult:
+            with anyio.fail_after(self.cfg.timeout):
+                async with _clean_errors(), self._session() as session:
+                    return await session.call_tool(name, arguments)
+
+        return await self._guarded(op)
