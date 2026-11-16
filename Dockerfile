@@ -1,4 +1,7 @@
 FROM python:3.11-slim
+LABEL org.opencontainers.image.source="https://github.com/didacnashe-cmd/beira" \
+      org.opencontainers.image.title="Beira" \
+      org.opencontainers.image.description="Proxy MCP que re-expone un MCP local a contactos, con permisos."
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     BEIRA_DB=/data/beira.db
