@@ -1,5 +1,7 @@
 """Extremo a extremo: cliente MCP real -> Beira (HTTP) -> MCP local falso (HTTP)."""
 
+import json
+import os
 import socket
 import threading
 import time
@@ -232,6 +234,42 @@ def test_path_tool_without_folder_is_not_exposed(env):
     assert tools_of(env, token) == {"ping"}
     is_error, text = call(env, token, "read_obsidian_note", {"note_path": "a.md"})
     assert is_error and "READ" not in text
+
+
+# --- reglas por argumento ----------------------------------------------------
+
+def test_rules_restrict_sql_tables_per_contact(env):
+    # rules.json junto a la base de datos; se lee sin reiniciar Beira.
+    rules_path = env.beira.cfg.rules.path
+    with open(rules_path, "w", encoding="utf-8") as fh:
+        json.dump({"pau": {"query_personal_db": {"tables": ["garmin_daily"]}}}, fh)
+    pau = env.store.invite("pau", ["query_personal_db"])
+    marta = env.store.invite("marta", ["query_personal_db"])
+
+    ok = "SELECT day, steps FROM garmin_daily"
+    assert call(env, pau, "query_personal_db", {"sql_query": ok}) == (False, f"SQL {ok}")
+    for sql in [
+        "SELECT * FROM hevy_sets",
+        "SELECT * FROM garmin_daily JOIN cardio_activities",
+        "SELECT * FROM sqlite_master",
+        "SELECT * FROM garmin_daily; ATTACH DATABASE 'x' AS x",
+        "SELECT * FROM/**/\"HEVY_SETS\"",
+    ]:
+        is_error, text = call(env, pau, "query_personal_db", {"sql_query": sql})
+        assert is_error and "SQL" not in text, sql
+        assert env.store.audit_log(1)[0]["outcome"] == "denied"
+    # Quien no tiene regla sigue como siempre.
+    assert call(env, marta, "query_personal_db", {"sql_query": "SELECT * FROM hevy_sets"}) == (
+        False, "SQL SELECT * FROM hevy_sets")
+
+    # Un rules.json roto cierra todo (salvo ping) hasta que se arregle.
+    with open(rules_path, "w", encoding="utf-8") as fh:
+        fh.write("{ roto")
+    os.utime(rules_path, ns=(1, 1))
+    is_error, text = call(env, marta, "query_personal_db", {"sql_query": "SELECT 1"})
+    assert is_error and "SQL" not in text
+    assert call(env, marta, "ping")[0] is False
+    os.remove(rules_path)
 
 
 # --- límites -----------------------------------------------------------------
