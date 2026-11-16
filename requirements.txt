@@ -1,3 +1,6 @@
-# mcp 2.x elimina FastMCP y cambia la API: se fija la rama 1.x a propósito.
-mcp>=1.26,<2
-uvicorn>=0.30
+# Versiones fijadas a propósito: con despliegue continuo, cada push reconstruye la
+# imagen en el VPS, así que una dependencia flotante es una ruleta. mcp 2.x además
+# elimina FastMCP y cambia la API. Estas son las que beira tiene ahora en marcha.
+# Para subir una versión: cámbiala aquí, empuja, y que lo diga el job de tests.
+mcp==1.30.0
+uvicorn==0.54.0
