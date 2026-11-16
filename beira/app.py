@@ -18,7 +18,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from . import VERSION
 from .config import Config
 from .limits import RateLimiter, cap_result
-from .policy import Denied, apply_path_policy
+from .policy import Denied, apply_policy
 from .store import Contact, Store
 from .upstream import Upstream
 
@@ -82,7 +82,7 @@ class Beira:
             try:
                 if not self.visible(contact, name):
                     raise Denied("Tool no disponible.")
-                arguments = apply_path_policy(name, arguments, self.cfg.path_args, contact.path_root)
+                arguments = apply_policy(contact.name, name, arguments, self.cfg.rules.get(), self.cfg.path_args, contact.path_root)
             except Denied as exc:
                 outcome, detail = "denied", str(exc)
                 return _error(str(exc))
