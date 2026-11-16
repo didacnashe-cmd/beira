@@ -26,4 +26,4 @@ jobs:
           echo "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
 
       - name: Desplegar
-        run: ssh -o BatchMode=yes ubuntu@100.105.67.98 "${{ github.event.repository.name }}"
+        run: ssh -p 2222 -o BatchMode=yes ubuntu@100.105.67.98 "${{ github.event.repository.name }}"
