@@ -1,7 +1,7 @@
 import os
 from mcp.server.fastmcp import FastMCP
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 mcp = FastMCP("beira", host="127.0.0.1", port=int(os.getenv("BEIRA_PORT", "8100")))
 
 @mcp.tool()
