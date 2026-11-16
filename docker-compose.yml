@@ -1,0 +1,9 @@
+services:
+  beira:
+    build: .
+    container_name: beira
+    restart: unless-stopped
+    network_mode: host      # igual que tu MCP, por los iptables de Oracle
+    mem_limit: 128m
+    environment:
+      - BEIRA_PORT=8100     # 8000/8001 reservados para tu MCP

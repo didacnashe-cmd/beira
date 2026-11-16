@@ -1,0 +1,29 @@
+name: Deploy al VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # botón para desplegar a mano desde GitHub
+
+concurrency: deploy-${{ github.repository }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Unirse a Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+
+      - name: Preparar SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Desplegar
+        run: ssh -o BatchMode=yes ubuntu@100.105.67.98 "${{ github.event.repository.name }}"
