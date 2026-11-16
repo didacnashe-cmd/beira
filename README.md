@@ -22,7 +22,7 @@ Claude del contacto ──HTTPS──▶ túnel ──▶ Beira (127.0.0.1:8100)
 | Aislamiento de rutas de Obsidian por contacto (`..`, absolutas, `C:\`, `~` bloqueadas) | T09 |
 | Timeout, rate limit por contacto y tamaño máximo de respuesta | T10 |
 | Auditoría: contacto, tool, argumentos, duración, resultado, fecha | T11 |
-| CLI mínima: `invite`, `revoke`, `list`, `audit`, `tools` | parte de T18 |
+| CLI: `invite`, `revoke`, `list`, `audit` (y `--purge-before`), `tools`, `grant`, `ungrant`, `path`, `rotate` | parte de T18 |
 
 Fuera de esta versión: federación entre Beiras (F2), salvoconducto y asistente
 de arranque (F3), Server Card, spec y publicación (F4), Service Tokens de
@@ -55,6 +55,50 @@ docker exec beira python -m beira revoke pau
 `invite` imprime el token **una sola vez** y el bloque de configuración que el
 contacto pega en su cliente MCP. Volver a invitar a un contacto revocado le da
 un token nuevo y sustituye sus permisos.
+
+### Cambiar permisos sin revocar
+
+Estas órdenes actúan sobre un contacto **activo** y conservan su token (salvo
+`rotate`). Si el contacto no existe o está revocado, dan error y salen con
+código 1.
+
+```bash
+docker exec beira python -m beira grant pau --tools append_to_obsidian_note
+```
+
+```bash
+docker exec beira python -m beira ungrant pau --tools append_to_obsidian_note
+```
+
+```bash
+docker exec beira python -m beira path pau --path Compartido/pau-2
+```
+
+```bash
+docker exec beira python -m beira path pau --clear
+```
+
+```bash
+docker exec beira python -m beira rotate pau
+```
+
+- `grant` / `ungrant` añaden o quitan tools de la lista blanca (`--tools a,b`).
+- `path` cambia la carpeta del contacto (se valida igual que en `invite`);
+  `--clear` la quita, y entonces las tools con ruta dejan de exponerse.
+- `rotate` genera un token nuevo, invalida el anterior al instante y conserva
+  tools y carpeta. Imprime el token y el bloque de configuración igual que
+  `invite`.
+- `grant` y `path` dan los mismos avisos que `invite`: tool en
+  `BEIRA_DENY_TOOLS`, tool con ruta sin carpeta, carpeta que no limita una tool.
+
+### Purgar la auditoría
+
+```bash
+docker exec beira python -m beira audit --purge-before 2026-01-01
+```
+
+Borra las filas de `audit` anteriores a esa fecha (UTC) e informa de cuántas
+borró.
 
 ## Cómo decide Beira
 

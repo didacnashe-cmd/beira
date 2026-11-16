@@ -10,7 +10,7 @@ import secrets
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Iterator
 
 from .policy import normalize_root
@@ -130,6 +130,62 @@ class Store:
             )
             return cur.rowcount > 0
 
+    def _active(self, con: sqlite3.Connection, name: str) -> sqlite3.Row:
+        row = con.execute("SELECT * FROM contacts WHERE name = ?", (name,)).fetchone()
+        if row is None:
+            raise StoreError(f"No existe ningún contacto llamado '{name}'.")
+        if row["revoked_at"] is not None:
+            raise StoreError(f"El contacto '{name}' está revocado. Vuelve a invitarlo con 'invite'.")
+        return row
+
+    def contact(self, name: str) -> Contact:
+        """Contacto activo llamado `name`; StoreError si no existe o está revocado."""
+        with self._db() as con:
+            return self._contact(con, self._active(con, name))
+
+    def grant(self, name: str, tools: list[str]) -> Contact:
+        """Añade tools a la lista blanca de un contacto activo (las ya concedidas se ignoran)."""
+        tools = sorted({t.strip() for t in tools if t.strip()})
+        if not tools:
+            raise StoreError("Indica al menos una tool con --tools.")
+        with self._db() as con:
+            row = self._active(con, name)
+            con.executemany(
+                "INSERT OR IGNORE INTO permissions (contact_id, tool) VALUES (?, ?)",
+                [(row["id"], t) for t in tools],
+            )
+            return self._contact(con, row)
+
+    def ungrant(self, name: str, tools: list[str]) -> Contact:
+        """Quita tools de la lista blanca de un contacto activo."""
+        tools = sorted({t.strip() for t in tools if t.strip()})
+        if not tools:
+            raise StoreError("Indica al menos una tool con --tools.")
+        with self._db() as con:
+            row = self._active(con, name)
+            con.executemany(
+                "DELETE FROM permissions WHERE contact_id = ? AND tool = ?",
+                [(row["id"], t) for t in tools],
+            )
+            return self._contact(con, row)
+
+    def set_path(self, name: str, path_root: str | None) -> Contact:
+        """Cambia (o quita, con None) la carpeta de un contacto activo."""
+        root = normalize_root(path_root) if path_root is not None else None
+        with self._db() as con:
+            row = self._active(con, name)
+            con.execute("UPDATE contacts SET path_root = ? WHERE id = ?", (root, row["id"]))
+            return self._contact(con, con.execute("SELECT * FROM contacts WHERE id = ?", (row["id"],)).fetchone())
+
+    def rotate(self, name: str) -> str:
+        """Da un token nuevo a un contacto activo; el anterior deja de valer al
+        instante. Conserva sus tools y su carpeta."""
+        token = "beira_" + secrets.token_urlsafe(32)
+        with self._db() as con:
+            row = self._active(con, name)
+            con.execute("UPDATE contacts SET token_hash = ? WHERE id = ?", (hash_token(token), row["id"]))
+        return token
+
     def _contact(self, con: sqlite3.Connection, row: sqlite3.Row) -> Contact:
         tools = tuple(
             r["tool"]
@@ -184,3 +240,14 @@ class Store:
         params.append(limit)
         with self._db() as con:
             return [dict(r) for r in con.execute(q, params)]
+
+    def purge_audit(self, before: str) -> int:
+        """Borra las filas de auditoría anteriores a `before` (AAAA-MM-DD, UTC).
+        Devuelve cuántas ha borrado."""
+        try:
+            day = date.fromisoformat(before)
+        except (TypeError, ValueError):
+            raise StoreError(f"Fecha no válida: '{before}'. Usa el formato AAAA-MM-DD.") from None
+        # `ts` es ISO 8601 en UTC, así que la comparación de texto respeta el orden.
+        with self._db() as con:
+            return con.execute("DELETE FROM audit WHERE ts < ?", (day.isoformat(),)).rowcount
