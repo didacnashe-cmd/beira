@@ -8,6 +8,8 @@ services:
     environment:
       - BEIRA_PORT=8100     # 8000/8001 reservados para tu MCP
       - BEIRA_UPSTREAM_URL=http://127.0.0.1:8000/mcp   # mcp-lab-server
+      # IP real del cliente tras el túnel de Cloudflare (Beira solo escucha en 127.0.0.1).
+      - BEIRA_TRUST_PROXY_HEADER=${BEIRA_TRUST_PROXY_HEADER:-CF-Connecting-IP}
       # Opcionales: defínelos en un .env junto a este fichero (no se sube a git).
       - BEIRA_PUBLIC_URL=${BEIRA_PUBLIC_URL:-}
       - BEIRA_UPSTREAM_TOKEN=${BEIRA_UPSTREAM_TOKEN:-}

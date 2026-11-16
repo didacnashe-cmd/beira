@@ -1,5 +1,7 @@
 """Extremo a extremo: cliente MCP real -> Beira (HTTP) -> MCP local falso (HTTP)."""
 
+import json
+import os
 import socket
 import threading
 import time
@@ -109,6 +111,7 @@ def env(lab, tmp_path):
     with Served(app) as s:
         s.beira = app.state.beira
         s.store = s.beira.store
+        s.app_cfg = cfg
         yield s
 
 
@@ -234,6 +237,42 @@ def test_path_tool_without_folder_is_not_exposed(env):
     assert is_error and "READ" not in text
 
 
+# --- reglas por argumento ----------------------------------------------------
+
+def test_rules_restrict_sql_tables_per_contact(env):
+    # rules.json junto a la base de datos; se lee sin reiniciar Beira.
+    rules_path = env.beira.cfg.rules.path
+    with open(rules_path, "w", encoding="utf-8") as fh:
+        json.dump({"pau": {"query_personal_db": {"tables": ["garmin_daily"]}}}, fh)
+    pau = env.store.invite("pau", ["query_personal_db"])
+    marta = env.store.invite("marta", ["query_personal_db"])
+
+    ok = "SELECT day, steps FROM garmin_daily"
+    assert call(env, pau, "query_personal_db", {"sql_query": ok}) == (False, f"SQL {ok}")
+    for sql in [
+        "SELECT * FROM hevy_sets",
+        "SELECT * FROM garmin_daily JOIN cardio_activities",
+        "SELECT * FROM sqlite_master",
+        "SELECT * FROM garmin_daily; ATTACH DATABASE 'x' AS x",
+        "SELECT * FROM/**/\"HEVY_SETS\"",
+    ]:
+        is_error, text = call(env, pau, "query_personal_db", {"sql_query": sql})
+        assert is_error and "SQL" not in text, sql
+        assert env.store.audit_log(1)[0]["outcome"] == "denied"
+    # Quien no tiene regla sigue como siempre.
+    assert call(env, marta, "query_personal_db", {"sql_query": "SELECT * FROM hevy_sets"}) == (
+        False, "SQL SELECT * FROM hevy_sets")
+
+    # Un rules.json roto cierra todo (salvo ping) hasta que se arregle.
+    with open(rules_path, "w", encoding="utf-8") as fh:
+        fh.write("{ roto")
+    os.utime(rules_path, ns=(1, 1))
+    is_error, text = call(env, marta, "query_personal_db", {"sql_query": "SELECT 1"})
+    assert is_error and "SQL" not in text
+    assert call(env, marta, "ping")[0] is False
+    os.remove(rules_path)
+
+
 # --- límites -----------------------------------------------------------------
 
 def test_timeout(env):
@@ -292,3 +331,90 @@ def test_survives_local_mcp_being_down(tmp_path):
         assert is_error and "127.0.0.1" not in text  # sin detalles internos
         assert env.store.audit_log(1)[0]["outcome"] == "upstream_error"
         assert httpx.get(f"{env.url}/healthz").status_code == 200
+
+
+# --- robustez ----------------------------------------------------------------
+
+BAD = {"Authorization": "Bearer beira_falso", "CF-Connecting-IP": "203.0.113.7"}
+
+
+@pytest.fixture
+def behind_tunnel(lab, tmp_path):
+    cfg = Config(
+        db_path=str(tmp_path / "t.db"),
+        upstream_url=f"{lab.url}/mcp",
+        auth_fail_limit=5,
+        trust_proxy_header="CF-Connecting-IP",
+    )
+    app = create_app(cfg)
+    with Served(app) as s:
+        s.store = app.state.beira.store
+        yield s
+
+
+def test_bad_token_burst_gets_429_without_hitting_sqlite(behind_tunnel, monkeypatch):
+    env = behind_tunnel
+    assert [post_initialize(env, BAD).status_code for _ in range(5)] == [401] * 5
+    calls = []
+    monkeypatch.setattr(env.store, "authenticate", lambda t: calls.append(t))
+    r = post_initialize(env, BAD)
+    assert r.status_code == 429 and int(r.headers["retry-after"]) > 0
+    assert calls == []  # bloqueada antes de consultar SQLite
+    assert httpx.get(f"{env.url}/healthz", headers=BAD).status_code == 200
+
+
+def test_good_token_from_another_ip_still_passes(behind_tunnel):
+    env = behind_tunnel
+    token = env.store.invite("pau", [])
+    for _ in range(5):
+        post_initialize(env, BAD)
+    assert post_initialize(env, BAD).status_code == 429
+    ok = {"Authorization": f"Bearer {token}", "CF-Connecting-IP": "198.51.100.9"}
+    assert post_initialize(env, ok).status_code == 200
+    assert call_with_headers(env, token, {"CF-Connecting-IP": "198.51.100.9"}) == (False, True)
+
+
+def call_with_headers(env, token, extra):
+    """Sesión MCP completa con cabeceras extra; devuelve (is_error del ping, sesión ok)."""
+    async def run():
+        headers = {"Authorization": f"Bearer {token}", **extra}
+        async with httpx.AsyncClient(headers=headers, timeout=10) as http:
+            async with streamable_http_client(f"{env.url}/mcp", http_client=http) as (read, write, _):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    r = await session.call_tool("ping", {})
+                    return r.isError, True
+
+    return anyio.run(run)
+
+
+def test_proxy_header_is_ignored_unless_configured(env):
+    # Sin BEIRA_TRUST_PROXY_HEADER cuenta la IP del socket: rotar la cabecera no esquiva el freno.
+    for i in range(env.app_cfg.auth_fail_limit):
+        post_initialize(env, {"Authorization": "Bearer beira_falso", "CF-Connecting-IP": f"10.0.0.{i}"})
+    assert post_initialize(env, {"CF-Connecting-IP": "10.9.9.9"}).status_code == 429
+
+
+def test_local_mcp_down_fails_fast_on_second_call(tmp_path):
+    cfg = Config(
+        db_path=str(tmp_path / "d.db"), upstream_url=f"http://127.0.0.1:{free_port()}/mcp",
+        timeout=5, connect_timeout=0.5, upstream_backoff=30,
+    )
+    app = create_app(cfg)
+    with Served(app) as env:
+        env.store = app.state.beira.store
+        token = env.store.invite("pau", ["query_personal_db"])
+        assert call(env, token, "query_personal_db", {"sql_query": "select 1"})[0] is True
+        assert app.state.beira.upstream.down.active()
+        start = time.monotonic()
+        is_error, _ = call(env, token, "query_personal_db", {"sql_query": "select 1"})
+        assert is_error and time.monotonic() - start < 0.45  # sin esperar al connect_timeout
+        assert env.store.audit_log(1)[0]["outcome"] == "upstream_error"
+        assert tools_of(env, token) == {"ping"}
+
+
+def test_slow_tool_does_not_mark_local_mcp_down(env):
+    token = env.store.invite("pau", ["slow"])
+    assert call(env, token, "slow")[0] is True
+    assert env.store.audit_log(1)[0]["outcome"] == "timeout"
+    assert not env.beira.upstream.down.active()
