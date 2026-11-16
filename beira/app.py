@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
 import time
 from typing import Any
 
@@ -17,8 +18,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from . import VERSION
 from .config import Config
-from .limits import RateLimiter, cap_result
-from .policy import Denied, apply_policy
+from .limits import FailureGuard, RateLimiter, cap_result
+from .policy import Denied, apply_policy, apply_path_policy
 from .store import Contact, Store
 from .upstream import Upstream
 
@@ -110,22 +111,50 @@ class Beira:
 
 
 class AuthMiddleware:
-    """Exige `Authorization: Bearer <token>` de un contacto activo."""
+    """Exige `Authorization: Bearer <token>` de un contacto activo.
+
+    Una IP con demasiados 401 seguidos recibe 429 durante un rato, sin tocar SQLite.
+    """
 
     OPEN_PATHS = {"/healthz"}
 
-    def __init__(self, app: ASGIApp, store: Store):
+    def __init__(self, app: ASGIApp, store: Store, guard: FailureGuard | None = None, ip_header: str = ""):
         self.app = app
         self.store = store
+        self.guard = guard
+        # Solo se confía en la cabecera si se configura (Beira detrás de un túnel).
+        self.ip_header = ip_header.lower().encode("latin-1")
+
+    def client_ip(self, scope: Scope, headers: dict[bytes, bytes]) -> str:
+        if self.ip_header:
+            forwarded = headers.get(self.ip_header, b"").decode("latin-1").strip()
+            if forwarded:
+                return forwarded
+        client = scope.get("client")
+        return client[0] if client else "?"
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["path"] in self.OPEN_PATHS:
             await self.app(scope, receive, send)
             return
-        header = dict(scope["headers"]).get(b"authorization", b"").decode("latin-1")
+        headers = dict(scope["headers"])
+        ip = self.client_ip(scope, headers)
+        if self.guard is not None:
+            left = self.guard.blocked(ip)
+            if left > 0:
+                response = JSONResponse(
+                    {"error": "too_many_auth_failures"},
+                    status_code=429,
+                    headers={"Retry-After": str(max(1, math.ceil(left)))},
+                )
+                await response(scope, receive, send)
+                return
+        header = headers.get(b"authorization", b"").decode("latin-1")
         scheme, _, token = header.partition(" ")
         contact = self.store.authenticate(token.strip()) if scheme.lower() == "bearer" else None
         if contact is None:
+            if self.guard is not None:
+                self.guard.fail(ip)
             response = JSONResponse(
                 {"error": "unauthorized"}, status_code=401, headers={"WWW-Authenticate": "Bearer"}
             )
@@ -171,8 +200,10 @@ def create_app(cfg: Config | None = None, beira: Beira | None = None) -> Starlet
         routes=[Route("/healthz", healthz), Route("/mcp", endpoint=MCPEndpoint())],
         lifespan=lifespan,
     )
-    app.add_middleware(AuthMiddleware, store=beira.store)
+    guard = FailureGuard(cfg.auth_fail_limit)
+    app.add_middleware(AuthMiddleware, store=beira.store, guard=guard, ip_header=cfg.trust_proxy_header)
     app.state.beira = beira
+    app.state.auth_guard = guard
     return app
 
 

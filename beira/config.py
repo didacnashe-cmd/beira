@@ -129,6 +129,10 @@ class Config:
     deny_tools: frozenset[str] = frozenset({"run_bash_command"})
     # URL pública (solo para imprimirla en las invitaciones).
     public_url: str = ""
+    # Robustez: freno a tokens inválidos por IP y caché de «MCP local caído».
+    auth_fail_limit: int = 20        # 401 por IP y minuto antes de responder 429 (0 = sin freno)
+    trust_proxy_header: str = ""     # cabecera con la IP real (p. ej. CF-Connecting-IP); vacío = IP del socket
+    upstream_backoff: float = 10.0   # segundos que se da por caído el MCP local tras un fallo de conexión
     # Reglas por argumento (JSON). Vacío: `rules.json` junto a la base de datos
     # (`/data/rules.json` en Docker). Si el fichero no existe, no hay reglas.
     rules_path: str = ""
@@ -156,5 +160,8 @@ class Config:
             path_args=_parse_map(e.get("BEIRA_PATH_ARGS", DEFAULT_PATH_ARGS)),
             deny_tools=_parse_set(e.get("BEIRA_DENY_TOOLS", ",".join(sorted(d.deny_tools)))),
             public_url=e.get("BEIRA_PUBLIC_URL", d.public_url),
+            auth_fail_limit=int(e.get("BEIRA_AUTH_FAIL_LIMIT", d.auth_fail_limit)),
+            trust_proxy_header=e.get("BEIRA_TRUST_PROXY_HEADER", d.trust_proxy_header).strip(),
+            upstream_backoff=float(e.get("BEIRA_UPSTREAM_BACKOFF", d.upstream_backoff)),
             rules_path=e.get("BEIRA_RULES", d.rules_path),
         )
