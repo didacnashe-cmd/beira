@@ -111,3 +111,20 @@ Cada push a `main` ejecuta los tests, construye la imagen y, solo si todo pasa,
 despliega en el VPS. Los datos viven en el volumen `beira-data`. Pasos manuales
 la primera vez: añadir el hostname en el túnel apuntando a `127.0.0.1:8100` y,
 si quieres, un `.env` junto al `docker-compose.yml` con `BEIRA_PUBLIC_URL`.
+
+## Publicar una versión
+
+La imagen pública vive en `ghcr.io/didacnashe-cmd/beira` (`linux/amd64` y
+`linux/arm64`) y la publica `.github/workflows/release.yml`, que solo se
+dispara con tags `vX.Y.Z`. No despliega al VPS.
+
+1. Sube `VERSION` en `beira/__init__.py` y fusiona en `main`.
+2. Crea y empuja el tag con la misma versión:
+
+   ```bash
+   git tag v0.2.0 && git push origin v0.2.0
+   ```
+
+El workflow falla si el tag no coincide con `VERSION` o si los tests no pasan.
+Si todo va bien, publica las etiquetas `0.2.0`, `0.2` y `latest`. La primera vez,
+el paquete se crea privado en GitHub: hazlo público desde *Package settings*.
