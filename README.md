@@ -206,6 +206,14 @@ despliega en el VPS. Los datos viven en el volumen `beira-data`. Pasos manuales
 la primera vez: añadir el hostname en el túnel apuntando a `127.0.0.1:8100` y,
 si quieres, un `.env` junto al `docker-compose.yml` con `BEIRA_PUBLIC_URL`.
 
+## Más documentación
+
+- [Exponer Beira a Internet](docs/exponer-beira.md): Cloudflare Tunnel, Tailscale Funnel o Caddy con TLS.
+- [Seguridad](SECURITY.md): cómo reportar una vulnerabilidad en privado.
+- [Contribuir](CONTRIBUTING.md): entorno, tests y flujo de PR.
+- [Gobernanza](GOVERNANCE.md): quién decide y cómo cambia la spec.
+
+Licencia: [Apache-2.0](LICENSE) © 2026 THC Labs.
 ## Publicar una versión
 
 La imagen pública vive en `ghcr.io/didacnashe-cmd/beira` (`linux/amd64` y
