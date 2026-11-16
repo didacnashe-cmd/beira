@@ -7,3 +7,12 @@ services:
     mem_limit: 128m
     environment:
       - BEIRA_PORT=8100     # 8000/8001 reservados para tu MCP
+      - BEIRA_UPSTREAM_URL=http://127.0.0.1:8000/mcp   # mcp-lab-server
+      # Opcionales: defínelos en un .env junto a este fichero (no se sube a git).
+      - BEIRA_PUBLIC_URL=${BEIRA_PUBLIC_URL:-}
+      - BEIRA_UPSTREAM_TOKEN=${BEIRA_UPSTREAM_TOKEN:-}
+    volumes:
+      - beira-data:/data    # contactos, permisos y auditoría (SQLite)
+
+volumes:
+  beira-data:
